@@ -21,7 +21,7 @@ function locked_(r,h,receivedAt){
     if(String(old.record_id)!==r.record_id||String(old.content_hash)!==h)
       return out_(409,false,RC.REQUEST_CONFLICT,ST.CONFLICT,'request_id is associated with different request data.',r);
     if(old.processing_status===ST.PROCESSING){
-      const official=reconcile_(r.record_id,h,history);
+      const official=reconcile_(r.record_id,h);
       if(official.exists&&official.contentMatches){
         update_(history,old.row,{processing_status:ST.SUCCESS,processed_at:new Date(),result_code:RC.IDEMPOTENT,error_message:''});
         return out_(200,true,RC.IDEMPOTENT,ST.SUCCESS,'Existing official record confirmed; no new registration.',r);
@@ -33,7 +33,7 @@ function locked_(r,h,receivedAt){
     return out_(409,false,old.result_code||RC.PROCESSING_ERROR,old.processing_status||ST.FAILED,'The logical request is not eligible for automatic reprocessing.',r);
   }
 
-  const existing=reconcile_(r.record_id,h,history);
+  const existing=reconcile_(r.record_id,h);
   if(existing.exists){
     if(existing.contentMatches){
       appendHistory_(history,{request_id:r.request_id,record_id:r.record_id,content_hash:h,processing_status:ST.DUPLICATE,received_at:receivedAt,processed_at:new Date(),result_code:RC.DUPLICATE_RECORD,error_message:''});
@@ -54,15 +54,16 @@ function locked_(r,h,receivedAt){
   }
 }
 
-function reconcile_(recordId,h,history){
-  const hh=headers_(history),ri=hh.indexOf('record_id'),hi=hh.indexOf('content_hash');
-  if(ri<0||hi<0) throw err_(500,RC.STORAGE_ERROR,'API processing history lacks reconciliation columns.');
-  const rows=data_(history);
-  for(let i=0;i<rows.length;i++) if(String(rows[i][ri])===recordId) return {exists:true,contentMatches:String(rows[i][hi])===h};
+// P0-ISSUE-001 fix: API processing history must never be treated as proof
+// that an official daily record exists. Reconciliation is performed only
+// against the official daily-record sheet.
+function reconcile_(recordId,h){
   const daily=sheet_(S.DAILY),dh=headers_(daily),di=dh.indexOf('record_id');
   if(di<0) return {exists:false,contentMatches:false};
   const dhi=dh.indexOf('content_hash'),dr=data_(daily);
-  for(let i=0;i<dr.length;i++) if(String(dr[i][di])===recordId) return {exists:true,contentMatches:dhi>=0&&String(dr[i][dhi])===h};
+  for(let i=0;i<dr.length;i++) if(String(dr[i][di])===recordId){
+    return {exists:true,contentMatches:dhi>=0&&String(dr[i][dhi])===h};
+  }
   return {exists:false,contentMatches:false};
 }
 
